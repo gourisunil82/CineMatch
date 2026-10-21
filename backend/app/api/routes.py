@@ -5,6 +5,7 @@ Every number returned here comes from the real MovieLens CSV files or from the
 models built at startup — nothing is hard-coded or simulated.
 """
 import math
+from typing import List
 
 import numpy as np
 import pandas as pd
@@ -12,11 +13,15 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from ..config import CF_MAX_RECOMMENDATIONS
 from ..ml import stats as stats_module
+from ..ml import posters
 from ..schemas import ErrorDetail, HealthResponse, MoviePage
 
 router = APIRouter(prefix="/api")
 
 SORT_OPTIONS = {"title", "year", "rating", "popularity"}
+
+# Upper bound for one /api/posters batch (protects the backend and TMDB).
+MAX_POSTER_IDS = 100
 
 
 # ----------------------------------------------------------------- helpers
@@ -29,7 +34,30 @@ def _state(request: Request) -> dict:
         "evaluation": request.app.state.evaluation,
         "evaluation_status": request.app.state.evaluation_status,
         "started_at": request.app.state.started_at,
+        "tmdb_map": getattr(request.app.state, "tmdb_map", {}),
     }
+
+
+def _poster_url(movie_id: int) -> str | None:
+    """
+    Poster URL for a movie, taken from the local cache only.
+
+    This never performs network I/O, so the regular endpoints stay fast. The
+    dedicated /api/posters endpoint fills the gaps in the background.
+    """
+    return posters.cached_poster(movie_id)
+
+
+def _with_posters(items: list) -> list:
+    """Copy recommendation rows and attach the cached poster URL to each one."""
+    enriched = []
+    for item in items:
+        row = dict(item)
+        poster_url = _poster_url(int(row["movieId"]))
+        if poster_url:
+            row["posterUrl"] = poster_url
+        enriched.append(row)
+    return enriched
 
 
 def _clean_title(title: str) -> str:
@@ -115,23 +143,74 @@ def list_movies(
     page = min(page, total_pages)
     rows = catalog.iloc[(page - 1) * page_size : page * page_size]
 
-    return MoviePage(
-        page=page,
-        page_size=page_size,
-        total_results=total,
-        total_pages=total_pages,
-        results=[
+    results = []
+    for r in rows.itertuples(index=False):
+        movie_id = int(r.movieId)
+        results.append(
             {
-                "movieId": int(r.movieId),
+                "movieId": movie_id,
                 "title": r.title,
                 "genres": r.genres,
                 "year": None if pd.isna(r.year) else int(r.year),
                 "avg_rating": None if pd.isna(r.avg_rating) else round(float(r.avg_rating), 2),
                 "rating_count": int(r.rating_count),
+                "posterUrl": _poster_url(movie_id),
             }
-            for r in rows.itertuples(index=False)
-        ],
+        )
+    return MoviePage(
+        page=page,
+        page_size=page_size,
+        total_results=total,
+        total_pages=total_pages,
+        results=results,
     )
+
+
+@router.get("/posters")
+def movie_posters(
+    request: Request,
+    ids: str = Query(
+        "",
+        description="Comma separated MovieLens movie ids, e.g. '1,2,3'. "
+        "Results are cached posters plus freshly fetched ones.",
+    ),
+):
+    """
+    Batch poster lookup keyed by the MovieLens movie id.
+
+    Cached posters are returned immediately. Posters that are not cached yet are
+    fetched from the TMDB movie-details endpoint (at most one TMDB call per
+    movie, never at startup and never on every render). If TMDB is unreachable
+    or no API key is configured the endpoint still answers with ``null`` values
+    so the frontend can fall back to its generated artwork.
+    """
+    s = _state(request)
+    wanted: List[int] = []
+    for chunk in ids.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        try:
+            movie_id = int(chunk)
+        except ValueError:
+            continue
+        if movie_id > 0 and movie_id not in wanted:
+            wanted.append(movie_id)
+        if len(wanted) >= MAX_POSTER_IDS:
+            break
+
+    if not wanted:
+        return {"posters": {}}
+
+    tmdb_map = s["tmdb_map"]
+    pairs = [(movie_id, tmdb_map.get(movie_id)) for movie_id in wanted]
+    found = posters.fetch_posters(pairs)
+    return {
+        "posters": {str(movie_id): found.get(movie_id) for movie_id in wanted},
+        # status tells the frontend whether a missing poster is final ("missing")
+        # or a temporary failure it may retry later ("error" / "unknown").
+        "status": {str(movie_id): posters.cached_status(movie_id) for movie_id in wanted},
+    }
 
 
 @router.get("/search/suggest")
@@ -143,17 +222,19 @@ def suggest(request: Request, q: str = Query(..., min_length=1), limit: int = Qu
         return {"suggestions": []}
     catalog = s["catalog"]
     hits = catalog[catalog["search_text"].str.contains(needle, regex=False, na=False)].head(limit)
-    return {
-        "suggestions": [
+    suggestions = []
+    for r in hits.itertuples(index=False):
+        movie_id = int(r.movieId)
+        suggestions.append(
             {
-                "movieId": int(r.movieId),
+                "movieId": movie_id,
                 "title": r.title,
                 "year": None if pd.isna(r.year) else int(r.year),
                 "genres": r.genres,
+                "posterUrl": _poster_url(movie_id),
             }
-            for r in hits.itertuples(index=False)
-        ]
-    }
+        )
+    return {"suggestions": suggestions}
 
 
 @router.get("/movies/{movie_id}", responses={404: {"model": ErrorDetail}})
@@ -194,6 +275,7 @@ def movie_detail(request: Request, movie_id: int):
         "top_tags": [{"tag": t, "count": int(c)} for t, c in top_tags.items()],
         "imdbId": imdb_id,
         "tmdbId": tmdb_id,
+        "posterUrl": _poster_url(movie_id),
         "has_tags": bool(str(r.tag_text).strip()),
     }
 
@@ -214,11 +296,12 @@ def similar_movies(request: Request, movie_id: int, n: int = Query(10, ge=1, le=
             detail=f"Movie id {movie_id} was not found in the dataset, so similar "
             "movies cannot be computed.",
         )
+    results = s["content"].similar(movie_id, n=n)
     return {
         "movie_id": movie_id,
         "method": "content_based",
         "method_label": "TF-IDF over genres + tags, cosine similarity",
-        "results": s["content"].similar(movie_id, n=n),
+        "results": _with_posters(results),
     }
 
 
@@ -246,7 +329,7 @@ def user_recommendations(request: Request, user_id: int, n: int = Query(10, ge=1
         "method_label": "User-user cosine similarity over the training rating matrix",
         "ratings_given": cf.user_rating_count(user_id),
         "neighbours": cf.neighbours(user_id, k=5),
-        "results": results,
+        "results": _with_posters(results),
     }
 
 
@@ -261,7 +344,8 @@ def user_history(request: Request, user_id: int, n: int = Query(15, ge=1, le=50)
             detail=f"User id {user_id} is not in the ratings dataset. "
             f"Valid user ids are {min(cf.user_ids)} to {max(cf.user_ids)}.",
         )
-    return {"user_id": user_id, "results": cf.history(user_id, n=n)}
+    results = cf.history(user_id, n=n)
+    return {"user_id": user_id, "results": _with_posters(results)}
 
 
 @router.get("/users/sample")

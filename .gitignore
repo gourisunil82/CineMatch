@@ -15,3 +15,11 @@ Thumbs.db
 
 # Notebook checkpoints
 .ipynb_checkpoints/
+
+# Environment files (never commit real keys)
+.env
+backend/.env
+
+# Generated TMDB poster cache (rebuilt at runtime)
+backend/.posters_cache.json
+backend/.posters_cache.tmp

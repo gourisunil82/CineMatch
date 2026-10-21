@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 
 from .api.routes import build_catalog, router
 from .ml import evaluation as evaluation_module
+from .ml import posters as poster_service
 from .ml.collaborative import CollaborativeRecommender
 from .ml.content_based import ContentRecommender
 from .ml.data_loader import load_dataset
@@ -51,6 +52,8 @@ async def lifespan(app: FastAPI):
     app.state.content = content
     app.state.cf = cf
     app.state.catalog = build_catalog(dataset)
+    # MovieLens movieId -> tmdbId, read once from the real links.csv.
+    app.state.tmdb_map = poster_service.build_tmdb_map(dataset.links)
     app.state.evaluation = None
     app.state.evaluation_status = "pending"
     app.state.started_at = started

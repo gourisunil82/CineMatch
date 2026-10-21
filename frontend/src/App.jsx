@@ -41,7 +41,7 @@ export default function App() {
           <div className="container">
             <span>CineMatch · KTU S5 Machine Learning project · built on the real MovieLens dataset</span>
             <span>
-              Content-based + collaborative filtering · <Link to="/how-it-works">how it works</Link>
+              Content-based + collaborative filtering · <Link to="/how-it-works">how it works</Link> · <span className="tmdb-attribution">This product uses the TMDB API but is not endorsed or certified by TMDB.</span>
             </span>
           </div>
         </footer>

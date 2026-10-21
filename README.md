@@ -37,7 +37,8 @@ from the original MovieLens dataset used in the project notebook.
 - 📌 Watchlist & favourites persisted in the browser (localStorage) — behaviour clearly explained in the UI
 - 📊 ML Insights page with **real dataset statistics** and **actually computed MAE/RMSE**
 - ✅ Loading indicators, empty states, input validation, understandable error messages
-- 🖼️ Locally generated poster art (the dataset contains no poster images, so nothing is ever broken)
+- 🖼️ Real **TMDB movie posters**, fetched on demand through the backend (cached locally) — with the
+  locally generated artwork as an automatic fallback, so nothing is ever broken
 
 ---
 
@@ -60,6 +61,10 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe run.py
 ```
+
+> `requirements.txt` now also pulls in `requests` (used for the TMDB poster lookups).
+> Add your TMDB key once with `copy .env.example .env` and editing `backend/.env`
+> to get real posters — see **Movie posters (TMDB)** below. The app runs fine without it.
 
 You should see:
 
@@ -121,10 +126,20 @@ backend/
     ├── api/routes.py      # all endpoints
     └── ml/
         ├── data_loader.py     # loads & validates the 4 CSVs (notebook Steps 1–3)
+        ├── posters.py         # TMDB poster lookup + local cache (movieId → tmdbId → poster_url)
         ├── content_based.py   # TF-IDF + cosine similarity (notebook Steps 5–6)
         ├── collaborative.py   # user-user CF, prediction, recommendations (Steps 7–8, 10–11)
         ├── evaluation.py      # held-out MAE / RMSE (Steps 7, 9)
         └── stats.py           # real dataset statistics (Steps 2–4)
+```
+
+```text
+backend/
+├── .env                      # TMDB_API_KEY — git ignored, never committed
+├── .env.example              # template with an empty TMDB_API_KEY=
+├── .posters_cache.json       # poster cache — git ignored, generated at runtime
+├── tests/test_posters.py     # poster tests (no network, TMDB is mocked)
+└── requirements.txt
 ```
 
 ### Frontend layout
@@ -134,6 +149,7 @@ frontend/src/
 ├── App.jsx                # routes for the 6 pages
 ├── api/client.js          # fetch wrapper with friendly error messages
 ├── context/WatchlistContext.jsx   # watchlist + favourites (localStorage)
+├── posterStore.js          # shared poster cache + batched /api/posters lookups
 ├── components/            # Navbar, MovieCard, PosterArt, SearchBar, Pagination, states…
 ├── pages/                 # Home, MovieDetail, Recommendations, Watchlist, Insights, HowItWorks
 └── styles/global.css      # the whole design system
@@ -157,8 +173,56 @@ Base URL: `http://127.0.0.1:8000` · Interactive docs: **http://127.0.0.1:8000/d
 | `GET /api/users/sample` | — | 5 real user ids across activity levels |
 | `GET /api/users/{user_id}/history` | `n` | that user's real highest-rated movies |
 | `GET /api/search/suggest` | `q`, `limit` | fast title suggestions |
+| `GET /api/posters` | `ids` (comma separated MovieLens movie ids) | `{ posters: { "<movieId>": url|null }, status: { "<movieId>": "ok"\|"missing"\|"error" } }` |
 
 Unknown movie ids and user ids return **404 with a clear explanation** (valid ranges are included).
+
+---
+
+## Movie posters (TMDB)
+
+The dataset ships no poster images, so the backend resolves them from **TMDB** at runtime.
+
+**How it works**
+
+1. `backend/.env` holds `TMDB_API_KEY=…` (read by the backend only — never exposed to the
+   browser, never logged, never committed).
+2. `data/links.csv` maps every MovieLens `movieId` to a valid `tmdbId` (no title search is
+   ever performed).
+3. The backend calls the TMDB **movie details** endpoint `/3/movie/{tmdb_id}` and builds
+   `https://image.tmdb.org/t/p/w500{poster_path}`.
+4. Results are cached in `backend/.posters_cache.json` (git ignored). A cached movie costs
+   no request; missing posters are remembered for a day, transient failures for 2 minutes.
+5. The frontend asks for posters **in one batch** per page (`GET /api/posters`) and keeps them
+   in a shared store, so a grid of 24 cards causes one request — not 24 — and no request is
+   made while rendering.
+6. If TMDB is unreachable, the key is missing, or a poster cannot be found, the generated
+   artwork is used instead. The recommendations themselves never break.
+
+**Setup**
+
+```powershell
+cd backend
+copy .env.example .env          # Windows
+# then put your key in .env:
+#   TMDB_API_KEY=your_key_here
+```
+
+Get a free key from <https://www.themoviedb.org/settings/api>. Without a key the app still
+works — every card simply uses the generated poster artwork.
+
+**Tests**
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe -m pytest tests -q
+```
+
+The tests never touch the network (TMDB is mocked) and cover the id mapping, valid and
+missing poster paths, cache hits, TTL expiry, TMDB failures, concurrency and the
+backward compatibility of the API responses.
+
+> This product uses the TMDB API but is not endorsed or certified by TMDB.
 
 ---
 
@@ -225,7 +289,7 @@ Both methods from the notebook are reused in `backend/app/ml/`; the notebook its
 | `data/movies.csv` | 9,742 movies | 19 genres + “(no genres listed)” |
 | `data/ratings.csv` | 100,836 ratings | 610 users, range 0.5–5.0, mean 3.502 |
 | `data/tags.csv` | 3,683 tags | only 1,572 movies have tags |
-| `data/links.csv` | 9,742 movies | `imdbId`, `tmdbId` (no poster URLs) |
+| `data/links.csv` | 9,742 movies | `imdbId`, `tmdbId` (used to look up real posters) |
 
 This is the MovieLens **ml-latest-small** dataset. Nothing in `data/` is modified, ever —
 the backend opens it read-only.

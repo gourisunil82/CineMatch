@@ -20,6 +20,9 @@ class MovieSummary(BaseModel):
     year: int | None = None
     avg_rating: float | None = None
     rating_count: int = 0
+    # Optional TMDB poster URL (added for the poster integration; older
+    # clients that ignore this field keep working unchanged).
+    posterUrl: str | None = None
 
 
 class MoviePage(BaseModel):

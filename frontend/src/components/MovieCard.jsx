@@ -15,6 +15,7 @@ export default function MovieCard({ movie, extra }) {
   const open = () => navigate(`/movie/${movie.movieId}`)
   const onWatchlist = inWatchlist(movie.movieId)
   const onFav = inFavorites(movie.movieId)
+  const genres = (movie.genres || '').replaceAll('|', ' · ')
 
   return (
     <article
@@ -32,9 +33,9 @@ export default function MovieCard({ movie, extra }) {
         </span>
       </div>
       <div className="card-body">
-        <div className="card-title">{movie.title}</div>
+        <div className="card-title" title={movie.title}>{movie.title}</div>
         <div className="card-meta">
-          {movie.year ? <span>{movie.year}</span> : null}
+          {movie.year ? <span className="card-year">{movie.year}</span> : null}
           {movie.avg_rating != null && movie.avg_rating > 0 ? (
             <span className="rating-pill">
               <IconStar size={13} /> {Number(movie.avg_rating).toFixed(1)}
@@ -43,7 +44,7 @@ export default function MovieCard({ movie, extra }) {
           ) : null}
           {extra}
         </div>
-        <div className="card-genres">{(movie.genres || '').replaceAll('|', ' · ')}</div>
+        <div className="card-genres" title={genres}>{genres}</div>
         <div className="card-actions" onClick={(e) => e.stopPropagation()}>
           <button
             className="icon-btn watch"

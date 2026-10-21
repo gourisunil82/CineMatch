@@ -51,6 +51,8 @@ export const api = {
   history: (id, n = 15) => request(`/users/${id}/history`, { n }),
   sampleUsers: () => request('/users/sample'),
   stats: () => request('/stats'),
+  /** Batch poster lookup by MovieLens movie id. */
+  posters: (ids = []) => request('/posters', { ids: ids.join(',') }),
 }
 
 /** Extract a user-friendly message from any thrown error. */

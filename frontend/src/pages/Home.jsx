@@ -90,10 +90,11 @@ export default function Home() {
 
       <div className="container">
         <div className="section-label">Browse by Genre</div>
-        <div className="chips scrollable" role="group" aria-label="Filter by genre">
-          <button className={`chip${genre === '' ? ' active' : ''}`} onClick={() => update({ genre: '' })}>
-            All Genres
-          </button>
+        <div className="chips-wrap">
+          <div className="chips scrollable" role="group" aria-label="Filter by genre">
+            <button className={`chip${genre === '' ? ' active' : ''}`} onClick={() => update({ genre: '' })}>
+              All Genres
+            </button>
           {genres.map((g) => (
             <button
               key={g.name}
@@ -103,6 +104,9 @@ export default function Home() {
               {g.name} <span className="chip-count">· {g.movie_count}</span>
             </button>
           ))}
+          </div>
+          <div className="chips-fade chips-fade-left" aria-hidden="true" />
+          <div className="chips-fade chips-fade-right" aria-hidden="true" />
         </div>
 
         <div className="toolbar">
@@ -110,7 +114,7 @@ export default function Home() {
             {data ? `${data.total_results.toLocaleString()} movie${data.total_results === 1 ? '' : 's'}${genre ? ` in ${genre}` : ''}${query ? ` matching “${query}”` : ''}` : 'Loading…'}
           </span>
           <span className="grow" />
-          <label className="field no-margin">
+          <label className="field no-margin toolbar-sort">
             <span className="sr-only">Sort by</span>
             <select className="input" value={sortBy} onChange={(e) => update({ sort: e.target.value })} aria-label="Sort movies">
               {SORTS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
